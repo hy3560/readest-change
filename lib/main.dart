@@ -2,91 +2,89 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:vocsy_epub_viewer/vocsy_epub_viewer.dart';
+import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import 'dart:io';
 
-void main() => runApp(const MaterialApp(home: PrivateReader(), debugShowCheckedModeBanner: false));
+void main() => runApp(const MaterialApp(
+  home: ReadestX(),
+  debugShowCheckedModeBanner: false,
+));
 
-class PrivateReader extends StatefulWidget {
-  const PrivateReader({super.key});
+class ReadestX extends StatefulWidget {
+  const ReadestX({super.key});
   @override
-  State<PrivateReader> createState() => _PrivateReaderState();
+  State<ReadestX> createState() => _ReadestXState();
 }
 
-class _PrivateReaderState extends State<PrivateReader> {
-  final TextEditingController _urlController = TextEditingController();
+class _ReadestXState extends State<ReadestX> {
   final AudioPlayer _player = AudioPlayer();
+  final TextEditingController _urlController = TextEditingController();
   
-  List<dynamic> _serverVoices = []; // 动态存储服务器返回的音色
-  String? _selectedVoice; // 当前选中的音色标识符符
-  bool _isLoadingVoices = false; // 是否正在加载
+  List<dynamic> _voices = [];
+  String? _currentVoice;
+  List<PlatformFile> _myBooks = [];
+  bool _isConnecting = false;
 
   @override
   void initState() {
     super.initState();
-    _loadInitialSettings();
+    _init();
   }
 
-  // 加载初始配置
-  Future<void> _loadInitialSettings() async {
+  Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
-    String savedUrl = prefs.getString('vps_url') ?? "";
-    setState(() {
-      _urlController.text = savedUrl;
-      _selectedVoice = prefs.getString('selected_voice');
-    });
-    // 如果有保存的地址，自动拉取一次音色列表
-    if (savedUrl.isNotEmpty) {
-      _fetchVoices(savedUrl);
-    }
+    _urlController.text = prefs.getString('vps_url') ?? "";
+    if (_urlController.text.isNotEmpty) _refreshVoices();
   }
 
-  // --- 核心功能：从服务器获取可用音色列表 ---
-  Future<void> _fetchVoices(String url) async {
-    if (!url.startsWith('http')) return;
-    setState(() => _isLoadingVoices = true);
-    
-    try {
-      // 访问 OpenAI 兼容标准的 /v1/models 接口
-      final response = await Dio().get("$url/models");
-      final List<dynamic> models = response.data['data'];
-      
-      setState(() {
-        _serverVoices = models;
-        // 如果之前选过的音色还在列表里就保留，否则默认选第一个
-        if (_selectedVoice == null || !models.any((m) => m['id'] == _selectedVoice)) {
-          _selectedVoice = models.isNotEmpty ? models[0]['id'] : null;
-        }
-        _isLoadingVoices = false;
-      });
-    } catch (e) {
-      setState(() => _isLoadingVoices = false);
-      print("获取音色失败: $e");
-    }
-  }
-
-  Future<void> _speak(String text) async {
+  // 核心：从 VPS 动态同步所有可用 TTS 音色
+  Future<void> _refreshVoices() async {
     String url = _urlController.text.trim();
-    if (_selectedVoice == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("请先连接服务器并选择音色")));
-      return;
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('vps_url', url);
-    await prefs.setString('selected_voice', _selectedVoice!);
-
+    if (!url.startsWith('http')) return;
+    setState(() => _isConnecting = true);
     try {
-      final response = await Dio().post(
-        "$url/audio/speech",
-        data: {
-          "model": "tts-1", 
-          "input": text, 
-          "voice": _selectedVoice 
-        },
-        options: Options(responseType: ResponseType.bytes),
-      );
-      await _player.play(BytesSource(response.data));
+      final res = await Dio().get("$url/models");
+      setState(() {
+        _voices = res.data['data'];
+        _currentVoice = _voices.isNotEmpty ? _voices[0]['id'] : null;
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('vps_url', url);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("合成失败: $e")));
+      debugPrint("VPS连接失败: $e");
+    } finally {
+      setState(() => _isConnecting = false);
+    }
+  }
+
+  // 核心：图书馆管理 - 导入书籍
+  Future<void> _importBook() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['epub', 'pdf', 'txt'],
+    );
+    if (result != null) {
+      setState(() => _myBooks.add(result.files.first));
+    }
+  }
+
+  // 核心：阅读模式切换 (EPUB分页/PDF滚动)
+  void _readBook(PlatformFile file) {
+    if (file.extension == 'epub') {
+      VocsyEpub.setConfig(
+        themeColor: Colors.orangeAccent,
+        identifier: "ios_book_${file.name}",
+        scrollDirection: EpubScrollDirection.ALLDIRECTIONS,
+        enableTts: true,
+      );
+      VocsyEpub.open(file.path!);
+    } else if (file.extension == 'pdf') {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(
+        appBar: AppBar(title: Text(file.name)),
+        body: SfPdfViewer.file(File(file.path!)),
+      )));
     }
   }
 
@@ -94,68 +92,88 @@ class _PrivateReaderState extends State<PrivateReader> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
-      appBar: AppBar(title: const Text("私有云阅听 - 动态版"), backgroundColor: Colors.black),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
+      appBar: AppBar(
+        title: const Text("READEST PRIVATE", style: TextStyle(fontWeight: FontWeight.w900)),
+        backgroundColor: Colors.black,
+        actions: [
+          IconButton(icon: const Icon(Icons.cloud_sync, color: Colors.orangeAccent), onPressed: _refreshVoices),
+        ],
+      ),
+      body: Column(
+        children: [
+          // 顶部设置区
+          _buildSettingsHeader(),
+          // 图书馆内容
+          Expanded(
+            child: _myBooks.isEmpty ? _buildEmptyHome() : _buildBookGrid(),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: Colors.orangeAccent,
+        onPressed: _importBook,
+        child: const Icon(Icons.add_link, color: Colors.black, size: 30),
+      ),
+    );
+  }
+
+  Widget _buildSettingsHeader() {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      color: Colors.black,
+      child: Column(
+        children: [
+          TextField(
+            controller: _urlController,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: "VPS Endpoint (http://ip:8000/v1)",
+              hintStyle: const TextStyle(color: Colors.white24),
+              filled: true, fillColor: Colors.white10,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+          const SizedBox(height: 10),
+          DropdownButton<String>(
+            value: _currentVoice,
+            dropdownColor: Colors.grey[900],
+            isExpanded: true,
+            style: const TextStyle(color: Colors.orangeAccent),
+            hint: const Text("请先获取音色列表", style: TextStyle(color: Colors.white30)),
+            items: _voices.map((v) => DropdownMenuItem<String>(
+              value: v['id'], child: Text("当前音色: ${v['id']}"),
+            )).toList(),
+            onChanged: (val) => setState(() => _currentVoice = val),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBookGrid() {
+    return GridView.builder(
+      padding: const EdgeInsets.all(20),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, childAspectRatio: 0.6, crossAxisSpacing: 15),
+      itemCount: _myBooks.length,
+      itemBuilder: (ctx, i) => GestureDetector(
+        onTap: () => _readBook(_myBooks[i]),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("1. 服务器配置", style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _urlController,
-              onChanged: (val) => _fetchVoices(val.trim()), // 地址变动自动刷新
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                filled: true, fillColor: Colors.white.withOpacity(0.05),
-                hintText: "http://你的IP:8000/v1", hintStyle: const TextStyle(color: Colors.white24),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.refresh, color: Colors.orangeAccent),
-                  onPressed: () => _fetchVoices(_urlController.text.trim()),
-                ),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 30),
-            const Text("2. 服务器可用音色", style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            _isLoadingVoices 
-              ? const LinearProgressIndicator(color: Colors.orangeAccent)
-              : Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _selectedVoice,
-                      dropdownColor: const Color(0xFF222222),
-                      isExpanded: true,
-                      hint: const Text("等待获取音色...", style: TextStyle(color: Colors.white30)),
-                      style: const TextStyle(color: Colors.white),
-                      items: _serverVoices.map((v) => DropdownMenuItem(
-                        value: v['id'].toString(),
-                        child: Text(v['id'].toString()),
-                      )).toList(),
-                      onChanged: (val) => setState(() => _selectedVoice = val),
-                    ),
-                  ),
-                ),
-            const SizedBox(height: 60),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orangeAccent,
-                minimumSize: const Size(double.infinity, 60),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              ),
-              onPressed: () => _speak("连接成功。当前正在使用服务器端的动态音色。"),
-              icon: const Icon(Icons.bolt, color: Colors.black),
-              label: const Text("测试连接", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-            ),
+            Expanded(child: Container(decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.menu_book, color: Colors.white24, size: 40))),
+            Text(_myBooks[i].name, style: const TextStyle(color: Colors.white70, fontSize: 11), maxLines: 2, textAlign: TextAlign.center),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildEmptyHome() {
+    return Center(
+      child: Opacity(opacity: 0.3, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        const Icon(Icons.auto_stories, size: 100, color: Colors.white),
+        const SizedBox(height: 10),
+        const Text("私有图书馆已就绪", style: TextStyle(color: Colors.white, fontSize: 18)),
+      ])),
     );
   }
 }

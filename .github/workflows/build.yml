@@ -13,44 +13,42 @@ jobs:
           channel: 'stable'
           flutter-version: '3.24.0'
 
-      - name: Reconstruct Project (All Platforms)
-        # 一次性生成安卓和 Windows 的原生配置文件
+      - name: Reconstruct Project
         run: flutter create . --platforms=android,windows --project-name=readest_change
 
-      # --- 安卓配置修复 ---
-      - name: Patch Android (Permissions & Kotlin)
+      - name: Force Patch Android Configurations
         run: |
-          # 注入联网权限
+          # 1. 注入联网权限
           $manifestPath = "android/app/src/main/AndroidManifest.xml"
           $permission = '<uses-permission android:name="android.permission.INTERNET" />'
           (Get-Content $manifestPath) -replace '<manifest xmlns:android="http://schemas.android.com/apk/res/android">', "<manifest xmlns:android=`"http://schemas.android.com/apk/res/android`">`n    $permission" | Set-Content $manifestPath
           
-          # 修正 Kotlin 版本兼容性
+          # 2. 强力修复 Kotlin 版本 (兼容新旧两种配置方式)
+          # 旧版方式: build.gradle
           $gradlePath = "android/build.gradle"
           if (Test-Path $gradlePath) {
             (Get-Content $gradlePath) -replace "ext.kotlin_version = '.*'", "ext.kotlin_version = '1.9.0'" | Set-Content $gradlePath
           }
+          
+          # 新版方式: settings.gradle (Flutter 3.19+ 常用)
+          $settingsPath = "android/settings.gradle"
+          if (Test-Path $settingsPath) {
+            (Get-Content $settingsPath) -replace 'id "org.jetbrains.kotlin.android" version ".*"', 'id "org.jetbrains.kotlin.android" version "1.9.0" apply false' | Set-Content $settingsPath
+          }
 
-      # --- Windows 配置优化 ---
-      - name: Configure Windows Desktop
-        run: |
-          # 开启 Windows 端的网络访问支持（通过运行配置确保）
-          flutter config --enable-windows-desktop
-
-      - name: Install dependencies
+      - name: Install Dependencies
         run: flutter pub get
 
       - name: Build Android APK
         run: flutter build apk --release
 
-      - name: Build Windows EXE
-        # 编译生成 Windows 运行文件
+      - name: Build Windows App
         run: flutter build windows --release
 
-      - name: Upload All Artifacts
+      - name: Upload Multi-Platform Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Readest-Full-Platform-Release
+          name: Readest-Full-Version
           path: |
             build/app/outputs/flutter-apk/app-release.apk
             build/windows/x64/runner/Release/
