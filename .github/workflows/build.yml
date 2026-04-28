@@ -16,6 +16,18 @@ jobs:
       - name: Reconstruct Flutter Project
         run: flutter create . --platforms=android --project-name=readest_change
 
+      # 关键修复点：强行将 Kotlin 版本升级到 1.9.0 以匹配 Flutter 3.24
+      - name: Patch Kotlin Version
+        run: |
+          $path = "android/build.gradle"
+          if (Test-Path $path) {
+            (Get-Content $path) -replace "ext.kotlin_version = '.*'", "ext.kotlin_version = '1.9.0'" | Set-Content $path
+          }
+          $path2 = "android/settings.gradle"
+          if (Test-Path $path2) {
+             (Get-Content $path2) -replace 'id "org.jetbrains.kotlin.android" version ".*"', 'id "org.jetbrains.kotlin.android" version "1.9.0" apply false' | Set-Content $path2
+          }
+
       - name: Install dependencies
         run: flutter pub get
 
