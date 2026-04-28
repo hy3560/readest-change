@@ -13,29 +13,29 @@ jobs:
           channel: 'stable'
           flutter-version: '3.24.0'
 
-      - name: Reconstruct Flutter Project
-        run: flutter create . --platforms=android --project-name=readest_change
+      - name: Reconstruct Project
+        run: flutter create . --platforms=android,windows --project-name=readest_change
 
-      # 关键修复点：强行将 Kotlin 版本升级到 1.9.0 以匹配 Flutter 3.24
-      - name: Patch Kotlin Version
+      - name: Patch Kotlin (For Android)
         run: |
           $path = "android/build.gradle"
           if (Test-Path $path) {
             (Get-Content $path) -replace "ext.kotlin_version = '.*'", "ext.kotlin_version = '1.9.0'" | Set-Content $path
           }
-          $path2 = "android/settings.gradle"
-          if (Test-Path $path2) {
-             (Get-Content $path2) -replace 'id "org.jetbrains.kotlin.android" version ".*"', 'id "org.jetbrains.kotlin.android" version "1.9.0" apply false' | Set-Content $path2
-          }
 
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build APK
+      - name: Build Android APK
         run: flutter build apk --release
 
-      - name: Upload Artifact
+      - name: Build Windows EXE
+        run: flutter build windows --release
+
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Readest-Private-Release
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: Readest-MultiPlatform-Release
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/windows/x64/runner/Release/
