@@ -13,7 +13,7 @@ jobs:
           channel: 'stable'
           flutter-version: '3.24.0'
 
-      - name: Cache Dependencies
+      - name: Cache Gradle Dependencies
         uses: actions/cache@v4
         with:
           path: |
@@ -21,34 +21,55 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
-      - name: Reconstruct Full Project
+      - name: Reconstruct Clean Project
         run: |
+          if (Test-Path "android") { Remove-Item -Recurse -Force "android" }
           flutter create . --platforms=android,windows --project-name=readest_change
-          flutter pub get
 
       - name: Advanced Android Patch
         run: |
-          $appGradle = "android/app/build.gradle"
-          (Get-Content $appGradle) -replace "compileSdk = flutter.compileSdkVersion", "compileSdk = 35" | Set-Content $appGradle
+          # 1. 注入联网权限
+          $manifestPath = "android/app/src/main/AndroidManifest.xml"
+          $permission = '<uses-permission android:name="android.permission.INTERNET" />'
+          (Get-Content $manifestPath) -replace '<manifest xmlns:android="http://schemas.android.com/apk/res/android">', "<manifest xmlns:android=`"http://schemas.android.com/apk/res/android`">`n    $permission" | Set-Content $manifestPath
           
-          $rootGradle = "android/build.gradle"
-          $jitpack = "allprojects { repositories { google(); mavenCentral(); maven { url 'https://jitpack.io' } } }"
-          Add-Content -Path $rootGradle -Value "`n$jitpack"
+          $appGradlePath = "android/app/build.gradle"
+          (Get-Content $appGradlePath) -replace "compileSdk = flutter.compileSdkVersion", "compileSdk = 35" | Set-Content $appGradlePath
+          
+          $rootGradlePath = "android/build.gradle"
+          $jitpackRepo = "allprojects { repositories { google(); mavenCentral(); maven { url 'https://jitpack.io' } } }"
+          Add-Content -Path $rootGradlePath -Value "`n$jitpackRepo"
 
-          $manifest = "android/app/src/main/AndroidManifest.xml"
-          $perm = '<uses-permission android:name="android.permission.INTERNET" />'
-          (Get-Content $manifest) -replace '<manifest xmlns:android="http://schemas.android.com/apk/res/android">', "<manifest xmlns:android=`"http://schemas.android.com/apk/res/android`">`n    $perm" | Set-Content $manifest
+          $wrapperPath = "android/gradle/wrapper/gradle-wrapper.properties"
+          $wrapperContent = @(
+            "distributionBase=GRADLE_USER_HOME",
+            "distributionPath=wrapper/dists",
+            "zipStoreBase=GRADLE_USER_HOME",
+            "zipStorePath=wrapper/dists",
+            "distributionUrl=https://services.gradle.org/distributions/gradle-7.6.3-all.zip"
+          )
+          $wrapperContent | Set-Content -Path $wrapperPath -Encoding Ascii
+
+          $settingsPath = "android/settings.gradle"
+          if (Test-Path $settingsPath) {
+            $content = Get-Content $settingsPath -Raw
+            $content = $content -replace 'id\s+["'']org\.jetbrains\.kotlin\.android["'']\s+version\s+["''][0-9\.]+["'']', 'id "org.jetbrains.kotlin.android" version "1.9.24"'
+            Set-Content -Path $settingsPath -Value $content
+          }
+
+      - name: Install Dependencies
+        run: flutter pub get
 
       - name: Build Android APK
         run: flutter build apk --release --no-pub
 
-      - name: Build Windows App
+      - name: Build Windows Executable
         run: flutter build windows --release
 
-      - name: Upload
+      - name: Upload Global Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Readest-Final-Build
+          name: Readest-International-Release
           path: |
             build/app/outputs/flutter-apk/app-release.apk
             build/windows/x64/runner/Release/
