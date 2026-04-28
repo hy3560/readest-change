@@ -13,49 +13,37 @@ jobs:
           channel: 'stable'
           flutter-version: '3.24.0'
 
-      - name: Reconstruct Flutter Project
+      - name: Reconstruct Project
         run: flutter create . --platforms=android,windows --project-name=readest_change
 
-      - name: Advanced Patch for Pro Reader
+      - name: Essential Android Patch
         run: |
-          $settingsPath = "android/settings.gradle"
-          if (Test-Path $settingsPath) {
-            $content = Get-Content $settingsPath -Raw
-            $content = $content -replace 'id\s+["'']org\.jetbrains\.kotlin\.android["'']\s+version\s+["''][0-9\.]+["'']', 'id "org.jetbrains.kotlin.android" version "1.9.24"'
-            Set-Content -Path $settingsPath -Value $content
-          }
-
-          $appGradle = "android/app/build.gradle"
-          if (Test-Path $appGradle) {
-             (Get-Content $appGradle) -replace "compileSdk = flutter.compileSdkVersion", "compileSdk = 35" | Set-Content $appGradle
-          }
-
-          $rootGradle = "android/build.gradle"
-          if (Test-Path $rootGradle) {
-             $content = Get-Content $rootGradle -Raw
-             $content = $content -replace "mavenCentral\(\)", "mavenCentral()`n        maven { url 'https://jitpack.io' }"
-             Set-Content -Path $rootGradle -Value $content
-          }
-
-          Add-Content -Path "android/gradle.properties" -Value "`nkotlin.incremental=false"
-
           $manifest = "android/app/src/main/AndroidManifest.xml"
           $perm = '<uses-permission android:name="android.permission.INTERNET" />'
           (Get-Content $manifest) -replace '<manifest xmlns:android="http://schemas.android.com/apk/res/android">', "<manifest xmlns:android=`"http://schemas.android.com/apk/res/android`">`n    $perm" | Set-Content $manifest
 
-      - name: Install dependencies
+          $settingsPath = "android/settings.gradle"
+          if (Test-Path $settingsPath) {
+            (Get-Content $settingsPath) -replace 'id "org.jetbrains.kotlin.android" version ".*"', 'id "org.jetbrains.kotlin.android" version "1.9.0" apply false' | Set-Content $settingsPath
+          }
+          $buildPath = "android/build.gradle"
+          if (Test-Path $buildPath) {
+            (Get-Content $buildPath) -replace "ext.kotlin_version = '.*'", "ext.kotlin_version = '1.9.0'" | Set-Content $buildPath
+          }
+
+      - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release --no-pub
+      - name: Build Android APK
+        run: flutter build apk --release
 
-      - name: Build Windows
+      - name: Build Windows EXE
         run: flutter build windows --release
 
-      - name: Upload Artifact
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Readest-Pro-Release
+          name: Readest-Lite-Release
           path: |
             build/app/outputs/flutter-apk/app-release.apk
             build/windows/x64/runner/Release/
