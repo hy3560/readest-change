@@ -14,32 +14,65 @@ class PrivateReader extends StatefulWidget {
 class _PrivateReaderState extends State<PrivateReader> {
   final TextEditingController _urlController = TextEditingController();
   final AudioPlayer _player = AudioPlayer();
+  
+  List<dynamic> _serverVoices = []; // 动态存储服务器返回的音色
+  String? _selectedVoice; // 当前选中的音色标识符符
+  bool _isLoadingVoices = false; // 是否正在加载
 
   @override
   void initState() {
     super.initState();
-    _loadSavedUrl(); // 初始化时读取保存的 IP
+    _loadInitialSettings();
   }
 
-  // 从本地存储读取上次填写的地址
-  Future<void> _loadSavedUrl() async {
+  // 加载初始配置
+  Future<void> _loadInitialSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    String savedUrl = prefs.getString('vps_url') ?? "";
     setState(() {
-      _urlController.text = prefs.getString('vps_url') ?? "";
+      _urlController.text = savedUrl;
+      _selectedVoice = prefs.getString('selected_voice');
     });
+    // 如果有保存的地址，自动拉取一次音色列表
+    if (savedUrl.isNotEmpty) {
+      _fetchVoices(savedUrl);
+    }
   }
 
-  // 播放逻辑：对接你私有的云端接口
+  // --- 核心功能：从服务器获取可用音色列表 ---
+  Future<void> _fetchVoices(String url) async {
+    if (!url.startsWith('http')) return;
+    setState(() => _isLoadingVoices = true);
+    
+    try {
+      // 访问 OpenAI 兼容标准的 /v1/models 接口
+      final response = await Dio().get("$url/models");
+      final List<dynamic> models = response.data['data'];
+      
+      setState(() {
+        _serverVoices = models;
+        // 如果之前选过的音色还在列表里就保留，否则默认选第一个
+        if (_selectedVoice == null || !models.any((m) => m['id'] == _selectedVoice)) {
+          _selectedVoice = models.isNotEmpty ? models[0]['id'] : null;
+        }
+        _isLoadingVoices = false;
+      });
+    } catch (e) {
+      setState(() => _isLoadingVoices = false);
+      print("获取音色失败: $e");
+    }
+  }
+
   Future<void> _speak(String text) async {
     String url = _urlController.text.trim();
-    if (!url.startsWith('http')) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("请填写正确的 API 地址 (需包含 http/https)")));
+    if (_selectedVoice == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("请先连接服务器并选择音色")));
       return;
     }
 
-    // 保存当前填写的地址到本地
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('vps_url', url);
+    await prefs.setString('selected_voice', _selectedVoice!);
 
     try {
       final response = await Dio().post(
@@ -47,78 +80,79 @@ class _PrivateReaderState extends State<PrivateReader> {
         data: {
           "model": "tts-1", 
           "input": text, 
-          "voice": "zh-CN-XiaoxiaoNeural"
+          "voice": _selectedVoice 
         },
         options: Options(responseType: ResponseType.bytes),
       );
-      
-      // 播放从 VPS 获取的音频二进制流
       await _player.play(BytesSource(response.data));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("云端连接失败: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("合成失败: $e")));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121212), // 极客深色模式
-      appBar: AppBar(
-        title: const Text("私有云阅听端", style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.black,
-        elevation: 0,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+      backgroundColor: const Color(0xFF121212),
+      appBar: AppBar(title: const Text("私有云阅听 - 动态版"), backgroundColor: Colors.black),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 40),
-            const Text("服务器配置", style: TextStyle(color: Colors.orangeAccent, fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
+            const Text("1. 服务器配置", style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
             TextField(
               controller: _urlController,
+              onChanged: (val) => _fetchVoices(val.trim()), // 地址变动自动刷新
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.05),
-                labelText: "VPS 端点地址",
-                hintText: "例如 http://你的IP:8000/v1",
-                hintStyle: const TextStyle(color: Colors.white30),
-                labelStyle: const TextStyle(color: Colors.white70),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                prefixIcon: const Icon(Icons.cloud_queue, color: Colors.orangeAccent),
-              ),
-            ),
-            const SizedBox(height: 60),
-            Center(
-              child: Column(
-                children: [
-                  const Icon(Icons.auto_stories, size: 80, color: Colors.white10),
-                  const SizedBox(height: 20),
-                  const Text(
-                    "“晓晓的声音不仅是好听，更是自建服务的自由。”",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54, fontSize: 16, fontStyle: FontStyle.italic),
-                  ),
-                ],
-              ),
-            ),
-            const Spacer(),
-            Center(
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orangeAccent,
-                  foregroundColor: Colors.black,
-                  minimumSize: const Size(double.infinity, 56),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                filled: true, fillColor: Colors.white.withOpacity(0.05),
+                hintText: "http://你的IP:8000/v1", hintStyle: const TextStyle(color: Colors.white24),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.refresh, color: Colors.orangeAccent),
+                  onPressed: () => _fetchVoices(_urlController.text.trim()),
                 ),
-                onPressed: () => _speak("连接成功！私有云端语音引擎已准备就绪，欢迎使用。"),
-                icon: const Icon(Icons.bolt, size: 28),
-                label: const Text("测试私有云连接", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
-            const SizedBox(height: 40),
+            const SizedBox(height: 30),
+            const Text("2. 服务器可用音色", style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            _isLoadingVoices 
+              ? const LinearProgressIndicator(color: Colors.orangeAccent)
+              : Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _selectedVoice,
+                      dropdownColor: const Color(0xFF222222),
+                      isExpanded: true,
+                      hint: const Text("等待获取音色...", style: TextStyle(color: Colors.white30)),
+                      style: const TextStyle(color: Colors.white),
+                      items: _serverVoices.map((v) => DropdownMenuItem(
+                        value: v['id'].toString(),
+                        child: Text(v['id'].toString()),
+                      )).toList(),
+                      onChanged: (val) => setState(() => _selectedVoice = val),
+                    ),
+                  ),
+                ),
+            const SizedBox(height: 60),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orangeAccent,
+                minimumSize: const Size(double.infinity, 60),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              onPressed: () => _speak("连接成功。当前正在使用服务器端的动态音色。"),
+              icon: const Icon(Icons.bolt, color: Colors.black),
+              label: const Text("测试连接", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+            ),
           ],
         ),
       ),
