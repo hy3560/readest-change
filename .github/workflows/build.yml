@@ -16,21 +16,23 @@ jobs:
       - name: Reconstruct Project
         run: flutter create . --platforms=android,windows --project-name=readest_change
 
-      - name: Force Patch Android Configurations
+      - name: Patch Android Configurations
         run: |
           # 1. 注入联网权限
           $manifestPath = "android/app/src/main/AndroidManifest.xml"
           $permission = '<uses-permission android:name="android.permission.INTERNET" />'
           (Get-Content $manifestPath) -replace '<manifest xmlns:android="http://schemas.android.com/apk/res/android">', "<manifest xmlns:android=`"http://schemas.android.com/apk/res/android`">`n    $permission" | Set-Content $manifestPath
           
-          # 2. 强力修复 Kotlin 版本 (兼容新旧两种配置方式)
-          # 旧版方式: build.gradle
+          # 将默认的 GitHub 下载地址替换为更稳定的腾讯云镜像地址
+          $wrapperPath = "android/gradle/wrapper/gradle-wrapper.properties"
+          if (Test-Path $wrapperPath) {
+            (Get-Content $wrapperPath) -replace "https\\://services.gradle.org/distributions/", "https\\://mirrors.cloud.tencent.com/gradle/" | Set-Content $wrapperPath
+          }
+
           $gradlePath = "android/build.gradle"
           if (Test-Path $gradlePath) {
             (Get-Content $gradlePath) -replace "ext.kotlin_version = '.*'", "ext.kotlin_version = '1.9.0'" | Set-Content $gradlePath
           }
-          
-          # 新版方式: settings.gradle (Flutter 3.19+ 常用)
           $settingsPath = "android/settings.gradle"
           if (Test-Path $settingsPath) {
             (Get-Content $settingsPath) -replace 'id "org.jetbrains.kotlin.android" version ".*"', 'id "org.jetbrains.kotlin.android" version "1.9.0" apply false' | Set-Content $settingsPath
