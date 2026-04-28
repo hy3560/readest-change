@@ -1,0 +1,15 @@
+name: readest_change
+description: A private cloud reader with Edge-TTS support.
+version: 1.0.0+1
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.4.0
+  audioplayers: ^5.2.1
+  shared_preferences: ^2.2.2
+
+flutter:
+  uses-material-design: true
