@@ -23,12 +23,18 @@ jobs:
           $permission = '<uses-permission android:name="android.permission.INTERNET" />'
           (Get-Content $manifestPath) -replace '<manifest xmlns:android="http://schemas.android.com/apk/res/android">', "<manifest xmlns:android=`"http://schemas.android.com/apk/res/android`">`n    $permission" | Set-Content $manifestPath
           
-          # 将默认的 GitHub 下载地址替换为更稳定的腾讯云镜像地址
+          # 2. 彻底修复 Gradle Wrapper (直接重写文件，避免转义错误)
           $wrapperPath = "android/gradle/wrapper/gradle-wrapper.properties"
-          if (Test-Path $wrapperPath) {
-            (Get-Content $wrapperPath) -replace "https\\://services.gradle.org/distributions/", "https\\://mirrors.cloud.tencent.com/gradle/" | Set-Content $wrapperPath
-          }
+          $wrapperContent = @"
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          distributionUrl=https://mirrors.cloud.tencent.com/gradle/gradle-7.6.3-all.zip
+          "@
+          Set-Content -Path $wrapperPath -Value $wrapperContent -Encoding Ascii
 
+          # 3. 强力修复 Kotlin 版本
           $gradlePath = "android/build.gradle"
           if (Test-Path $gradlePath) {
             (Get-Content $gradlePath) -replace "ext.kotlin_version = '.*'", "ext.kotlin_version = '1.9.0'" | Set-Content $gradlePath
