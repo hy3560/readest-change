@@ -13,43 +13,11 @@ jobs:
           channel: 'stable'
           flutter-version: '3.24.0'
 
-      - name: Cache Gradle Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+      - name: Reconstruct Flutter Project
+        run: flutter create . --platforms=android,windows --project-name=readest_change
 
-      - name: Reconstruct Clean Project
+      - name: Advanced Patch for Pro Reader
         run: |
-          if (Test-Path "android") { Remove-Item -Recurse -Force "android" }
-          flutter create . --platforms=android,windows --project-name=readest_change
-
-      - name: Advanced Android Patch
-        run: |
-          # 1. 注入联网权限
-          $manifestPath = "android/app/src/main/AndroidManifest.xml"
-          $permission = '<uses-permission android:name="android.permission.INTERNET" />'
-          (Get-Content $manifestPath) -replace '<manifest xmlns:android="http://schemas.android.com/apk/res/android">', "<manifest xmlns:android=`"http://schemas.android.com/apk/res/android`">`n    $permission" | Set-Content $manifestPath
-          
-          $appGradlePath = "android/app/build.gradle"
-          (Get-Content $appGradlePath) -replace "compileSdk = flutter.compileSdkVersion", "compileSdk = 35" | Set-Content $appGradlePath
-          
-          $rootGradlePath = "android/build.gradle"
-          $jitpackRepo = "allprojects { repositories { google(); mavenCentral(); maven { url 'https://jitpack.io' } } }"
-          Add-Content -Path $rootGradlePath -Value "`n$jitpackRepo"
-
-          $wrapperPath = "android/gradle/wrapper/gradle-wrapper.properties"
-          $wrapperContent = @(
-            "distributionBase=GRADLE_USER_HOME",
-            "distributionPath=wrapper/dists",
-            "zipStoreBase=GRADLE_USER_HOME",
-            "zipStorePath=wrapper/dists",
-            "distributionUrl=https://services.gradle.org/distributions/gradle-7.6.3-all.zip"
-          )
-          $wrapperContent | Set-Content -Path $wrapperPath -Encoding Ascii
-
           $settingsPath = "android/settings.gradle"
           if (Test-Path $settingsPath) {
             $content = Get-Content $settingsPath -Raw
@@ -57,19 +25,37 @@ jobs:
             Set-Content -Path $settingsPath -Value $content
           }
 
-      - name: Install Dependencies
+          $appGradle = "android/app/build.gradle"
+          if (Test-Path $appGradle) {
+             (Get-Content $appGradle) -replace "compileSdk = flutter.compileSdkVersion", "compileSdk = 35" | Set-Content $appGradle
+          }
+
+          $rootGradle = "android/build.gradle"
+          if (Test-Path $rootGradle) {
+             $content = Get-Content $rootGradle -Raw
+             $content = $content -replace "mavenCentral\(\)", "mavenCentral()`n        maven { url 'https://jitpack.io' }"
+             Set-Content -Path $rootGradle -Value $content
+          }
+
+          Add-Content -Path "android/gradle.properties" -Value "`nkotlin.incremental=false"
+
+          $manifest = "android/app/src/main/AndroidManifest.xml"
+          $perm = '<uses-permission android:name="android.permission.INTERNET" />'
+          (Get-Content $manifest) -replace '<manifest xmlns:android="http://schemas.android.com/apk/res/android">', "<manifest xmlns:android=`"http://schemas.android.com/apk/res/android`">`n    $perm" | Set-Content $manifest
+
+      - name: Install dependencies
         run: flutter pub get
 
-      - name: Build Android APK
+      - name: Build APK
         run: flutter build apk --release --no-pub
 
-      - name: Build Windows Executable
+      - name: Build Windows
         run: flutter build windows --release
 
-      - name: Upload Global Artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Readest-International-Release
+          name: Readest-Pro-Release
           path: |
             build/app/outputs/flutter-apk/app-release.apk
             build/windows/x64/runner/Release/
