@@ -13,28 +13,35 @@ jobs:
           channel: 'stable'
           flutter-version: '3.24.0'
 
+      - name: Cache Gradle Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
       - name: Reconstruct Project
         run: flutter create . --platforms=android,windows --project-name=readest_change
 
       - name: Patch Android Configurations
         run: |
-          # 1. 注入联网权限
           $manifestPath = "android/app/src/main/AndroidManifest.xml"
           $permission = '<uses-permission android:name="android.permission.INTERNET" />'
           (Get-Content $manifestPath) -replace '<manifest xmlns:android="http://schemas.android.com/apk/res/android">', "<manifest xmlns:android=`"http://schemas.android.com/apk/res/android`">`n    $permission" | Set-Content $manifestPath
           
-          # 2. 彻底修复 Gradle Wrapper (直接重写文件，避免转义错误)
           $wrapperPath = "android/gradle/wrapper/gradle-wrapper.properties"
           $wrapperContent = @"
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
-          distributionUrl=https://mirrors.cloud.tencent.com/gradle/gradle-7.6.3-all.zip
+          distributionUrl=https://services.gradle.org/distributions/gradle-7.6.3-all.zip
           "@
           Set-Content -Path $wrapperPath -Value $wrapperContent -Encoding Ascii
 
-          # 3. 强力修复 Kotlin 版本
           $gradlePath = "android/build.gradle"
           if (Test-Path $gradlePath) {
             (Get-Content $gradlePath) -replace "ext.kotlin_version = '.*'", "ext.kotlin_version = '1.9.0'" | Set-Content $gradlePath
@@ -48,15 +55,15 @@ jobs:
         run: flutter pub get
 
       - name: Build Android APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-pub
 
-      - name: Build Windows App
+      - name: Build Windows Executable
         run: flutter build windows --release
 
-      - name: Upload Multi-Platform Artifacts
+      - name: Upload Global Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Readest-Full-Version
+          name: Readest-International-Release
           path: |
             build/app/outputs/flutter-apk/app-release.apk
             build/windows/x64/runner/Release/
