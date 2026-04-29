@@ -1,57 +1,75 @@
-name: Cloud Build
-on: [push]
+name: Flutter Build Dual-Platform
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # 允许手动触发构建
 
 jobs:
   build:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: apk
+          - os: windows-latest
+            platform: windows
 
-      - name: Setup Flutter
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 【关键：优化 Android 环境】
+      - name: Set up Java 17
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle' # 自动缓存 Gradle
+
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          flutter-version: '3.24.0'
-
-      - name: Reconstruct Flutter Project
-        run: flutter create . --platforms=android,windows --project-name=readest_change
-
-      - name: Advanced Patch for Pro Reader
-        run: |
-          $settingsPath = "android/settings.gradle"
-          if (Test-Path $settingsPath) {
-            $content = Get-Content $settingsPath -Raw
-            $content = $content -replace 'id\s+["'']org\.jetbrains\.kotlin\.android["'']\s+version\s+["''][0-9\.]+["'']', 'id "org.jetbrains.kotlin.android" version "1.9.24"'
-            Set-Content -Path $settingsPath -Value $content
-          }
-
-
-          $rootGradle = "android/build.gradle"
-          if (Test-Path $rootGradle) {
-             $content = Get-Content $rootGradle -Raw
-             $content = $content -replace "mavenCentral\(\)", "mavenCentral()`n        maven { url 'https://jitpack.io' }"
-             Set-Content -Path $rootGradle -Value $content
-          }
-
-          Add-Content -Path "android/gradle.properties" -Value "`nkotlin.incremental=false"
-
-          $manifest = "android/app/src/main/AndroidManifest.xml"
-          $perm = '<uses-permission android:name="android.permission.INTERNET" />'
-          (Get-Content $manifest) -replace '<manifest xmlns:android="http://schemas.android.com/apk/res/android">', "<manifest xmlns:android=`"http://schemas.android.com/apk/res/android`">`n    $perm" | Set-Content $manifest
+          cache: true
 
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release --no-pub
+      # 【针对 OOM 的终极解决方案】
+      - name: Build Android APK
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # 1. 强制在构建前清理内存
+          flutter clean
+          # 2. 使用极低的内存占用参数
+          # -Xmx2g: 限制 Java 堆内存为 2GB，留出更多给系统和 Dart
+          # org.gradle.workers.max=1: 禁止多线程并行编译，防止瞬间内存暴涨
+          flutter build apk --release \
+            --dart-define=GRADLE_OPTS="-Xmx2048m -Dorg.gradle.jvmargs=-Xmx2048m -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
 
-      - name: Build Windows
-        run: flutter build windows --release
+      - name: Build Windows EXE
+        if: matrix.os == 'windows-latest'
+        run: |
+          flutter clean
+          flutter build windows --release
 
-      - name: Upload Artifact
+      # 收集产物
+      - name: Upload APK
+        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: Readest-Pro-Release
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/windows/x64/runner/Release/
+          name: android-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload Windows Release
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-exe
+          path: build/windows/x64/runner/Release/
