@@ -3,73 +3,80 @@ name: Flutter Build Dual-Platform
 on:
   push:
     branches: [ "main", "master" ]
-  workflow_dispatch: # 允许手动触发构建
+  workflow_dispatch: # 支持手动点击触发构建
 
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
+    name: Build for ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     
     strategy:
-      fail-fast: false
+      fail-fast: false # 即使一个平台失败，另一个也继续跑完
       matrix:
         include:
           - os: ubuntu-latest
             platform: apk
+            output_path: build/app/outputs/flutter-apk/app-release.apk
           - os: windows-latest
             platform: windows
+            output_path: build/windows/x64/runner/Release/
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 【关键：优化 Android 环境】
+      # 设置 Java 环境 (仅 Android 需要)
       - name: Set up Java 17
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'apk'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle' # 自动缓存 Gradle
+          cache: 'gradle'
 
+      # 设置 Flutter SDK 并开启缓存
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
+          cache-key: "flutter-:os:-:channel:-:version:-:arch:-:hash:"
+          cache-path: "${{ runner.tool_cache }}/flutter"
 
       - name: Install dependencies
         run: flutter pub get
 
-      # 【针对 OOM 的终极解决方案】
+      # --- 构建 Android APK ---
       - name: Build Android APK
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'apk'
         run: |
-          # 1. 强制在构建前清理内存
-          flutter clean
-          # 2. 使用极低的内存占用参数
-          # -Xmx2g: 限制 Java 堆内存为 2GB，留出更多给系统和 Dart
-          # org.gradle.workers.max=1: 禁止多线程并行编译，防止瞬间内存暴涨
+          # 核心防溢出参数：禁用并行编译，禁用守护进程，限制JVM堆内存
           flutter build apk --release \
-            --dart-define=GRADLE_OPTS="-Xmx2048m -Dorg.gradle.jvmargs=-Xmx2048m -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
+            --dart-define=GRADLE_OPTS="-Dorg.gradle.jvmargs=-Xmx2560m -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
 
+      # --- 构建 Windows EXE ---
       - name: Build Windows EXE
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform == 'windows'
         run: |
-          flutter clean
+          # 针对日志中的 "No Windows desktop project configured" 进行强制修复
+          flutter config --enable-windows-desktop
+          if (!(Test-Path "windows")) { flutter create --platforms=windows . }
           flutter build windows --release
 
-      # 收集产物
-      - name: Upload APK
-        if: matrix.os == 'ubuntu-latest'
+      # --- 上传 Android 产物 ---
+      - name: Upload Android Artifact
+        if: matrix.platform == 'apk'
         uses: actions/upload-artifact@v4
         with:
-          name: android-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: Android-Release-APK
+          path: ${{ matrix.output_path }}
+          retention-days: 7
 
-      - name: Upload Windows Release
-        if: matrix.os == 'windows-latest'
+      # --- 上传 Windows 产物 (整个 Release 文件夹) ---
+      - name: Upload Windows Artifact
+        if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: windows-release-exe
-          path: build/windows/x64/runner/Release/
+          name: Windows-Release-EXE
+          path: ${{ matrix.output_path }}
+          retention-days: 7
