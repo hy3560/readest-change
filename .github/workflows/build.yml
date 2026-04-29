@@ -3,7 +3,7 @@ name: Flutter Build Dual-Platform
 on:
   push:
     branches: [ "main", "master" ]
-  workflow_dispatch: # 支持手动点击触发构建
+  workflow_dispatch: # 允许手动点击触发构建
 
 jobs:
   build:
@@ -22,61 +22,79 @@ jobs:
             output_path: build/windows/x64/runner/Release/
 
     steps:
+      # 1. 检出代码
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 设置 Java 环境 (仅 Android 需要)
+      # 2. 设置 Java 环境 (针对 Android 缓存路径做了修正)
       - name: Set up Java 17
         if: matrix.platform == 'apk'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
+          # 修正缓存路径，指向项目中的 android 目录
           cache: 'gradle'
+          cache-dependency-path: 'android/*.gradle*' 
 
-      # 设置 Flutter SDK 并开启缓存
+      # 3. 设置 Flutter 环境并开启 SDK 缓存
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
-          cache-key: "flutter-:os:-:channel:-:version:-:arch:-:hash:"
-          cache-path: "${{ runner.tool_cache }}/flutter"
 
+      # 4. 依赖缓存 (Pub Cache)
+      - name: Cache Pub dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ${{ env.FLUTTER_HOME }}/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      # 5. 获取依赖
       - name: Install dependencies
         run: flutter pub get
 
-      # --- 构建 Android APK ---
+      # 6. 【构建 Android APK】解决 OOM 的核心逻辑
       - name: Build Android APK
         if: matrix.platform == 'apk'
         run: |
-          # 核心防溢出参数：禁用并行编译，禁用守护进程，限制JVM堆内存
+          # 清理旧产物
+          flutter clean
+          # 彻底限制 Gradle：禁用并行、禁用守护进程、限制 JVM 堆内存为 3G
           flutter build apk --release \
-            --dart-define=GRADLE_OPTS="-Dorg.gradle.jvmargs=-Xmx2560m -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
+            --dart-define=GRADLE_OPTS="-Xmx3072m -Dorg.gradle.jvmargs=-Xmx3072m -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
 
-      # --- 构建 Windows EXE ---
+      # 7. 【构建 Windows EXE】自动修复环境缺失问题
       - name: Build Windows EXE
         if: matrix.platform == 'windows'
+        shell: pwsh
         run: |
-          # 针对日志中的 "No Windows desktop project configured" 进行强制修复
+          flutter clean
+          # 开启 Windows 支持
           flutter config --enable-windows-desktop
-          if (!(Test-Path "windows")) { flutter create --platforms=windows . }
+          # 关键：如果仓库里没提交 windows 目录，云端自动初始化它
+          if (!(Test-Path "windows")) {
+            flutter create --platforms=windows .
+          }
           flutter build windows --release
 
-      # --- 上传 Android 产物 ---
+      # 8. 上传 Android 产物
       - name: Upload Android Artifact
         if: matrix.platform == 'apk'
         uses: actions/upload-artifact@v4
         with:
           name: Android-Release-APK
           path: ${{ matrix.output_path }}
-          retention-days: 7
 
-      # --- 上传 Windows 产物 (整个 Release 文件夹) ---
+      # 9. 上传 Windows 产物 (打包整个 Release 文件夹)
       - name: Upload Windows Artifact
         if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: Windows-Release-EXE
           path: ${{ matrix.output_path }}
-          retention-days: 7
