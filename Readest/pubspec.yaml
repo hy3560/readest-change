@@ -1,0 +1,40 @@
+name: readest
+description: "A professional cross-platform reader for Android and Windows."
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  
+  # 文件选择与存储
+  file_picker: ^8.0.0  # 解决旧版 .getFilePath 错误，使用 .platform.pickFiles()
+  path_provider: ^2.1.2
+  
+  # 阅读器核心插件 (适配最新 Flutter 3.x)
+  syncfusion_flutter_pdfviewer: ^25.1.37
+  epub_view: ^3.0.0
+  
+  # 网络与集成
+  http: ^1.2.1
+  dio: ^5.4.1
+  
+  # 状态管理与性能优化
+  flutter_riverpod: ^2.5.1
+  isar: ^3.1.0+1
+  isar_flutter_libs: ^3.1.0+1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  isar_generator: ^3.1.0+1
+  build_runner: ^2.4.8
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/fonts/
