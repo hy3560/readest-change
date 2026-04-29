@@ -1,20 +1,22 @@
-name: Flutter Multi-Platform Build
+name: Flutter Professional Build (OOM Resistant)
 
 on:
   push:
     branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
-  workflow_dispatch: # 允许手动在 GitHub 页面点击触发
+  workflow_dispatch: # 允许手动点击触发
+
+# 全局环境变量：启用 Node.js 24 兼容模式，解决日志中的告警
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
     name: Build for ${{ matrix.platform }}
-    # 矩阵策略：GitHub 会根据设置自动开启 2 台虚拟机（1台 Ubuntu, 1台 Windows）同时跑
+    # 矩阵策略：分别开启 Linux 和 Windows 两台虚拟机并行构建
     runs-on: ${{ matrix.os }}
     
     strategy:
-      fail-fast: false # 即使一个平台构建失败，另一个也要继续跑完
+      fail-fast: false # 即使一个失败，另一个也要继续跑完
       matrix:
         include:
           - os: ubuntu-latest
@@ -29,23 +31,22 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. 设置 Java 环境 (仅 Android 需要)
+      # 2. 设置 Java 环境 (仅 Android)
       - name: Set up Java 17
         if: matrix.platform == 'android'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
-      # 3. 设置 Flutter SDK 并开启缓存
+      # 3. 设置 Flutter SDK (最新 Stable)
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      # 4. 手动缓存 Pub 依赖，进一步缩短时间
+      # 4. 缓存 Pub 依赖
       - name: Cache Pub Dependencies
         uses: actions/cache@v4
         with:
@@ -56,43 +57,44 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pub-
 
-      # 5. 获取依赖
+      # 5. 安装依赖
       - name: Install dependencies
         run: flutter pub get
 
-      # 6. 环境自愈：如果仓库没提交平台文件夹，则自动创建
-      - name: Repair Project Structure
+      # 6. 【核心：环境修复】解决找不到 gradle 文件的问题
+      # 无论仓库里有没有 android/windows 目录，这行代码都会确保云端环境完整
+      - name: Repair and Initialize Platform Projects
         run: |
           flutter config --enable-windows-desktop
           flutter create --platforms=android,windows .
 
-      # 7. 【核心步骤】构建 Android APK (解决 OOM)
+      # 7. 【核心：Android 构建】彻底解决 OOM
       - name: Build Android APK
         if: matrix.platform == 'android'
         run: |
-          # 核心内存限制参数：
-          # -Xmx3072m: 限制 JVM 堆内存为 3G
-          # org.gradle.daemon=false: 禁用守护进程，构建完立即释放内存
-          # org.gradle.parallel=false: 禁止并行编译，防止内存瞬时峰值
-          # org.gradle.workers.max=1: 强制单线程工作
+          # 策略说明：
+          # -Xmx2560m: 将 Java 堆限制在 2.5G，留出足够空间给系统和 Dart
+          # org.gradle.daemon=false: 不使用守护进程，用完即删内存
+          # org.gradle.parallel=false: 禁止并行，防止瞬时峰值内存溢出
+          # org.gradle.workers.max=1: 强制单线程编译
           flutter build apk --release \
-            --dart-define=GRADLE_OPTS="-Xmx3072m -Dorg.gradle.jvmargs=-Xmx3072m -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
+            --dart-define=GRADLE_OPTS="-Xmx2560m -Dorg.gradle.jvmargs=-Xmx2560m -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
 
-      # 8. 【核心步骤】构建 Windows EXE
+      # 8. 【核心：Windows 构建】
       - name: Build Windows EXE
         if: matrix.platform == 'windows'
         run: flutter build windows --release
 
-      # 9. 产物收集 - Android
-      - name: Upload Android APK
+      # 9. 产物收集 - Android (APK)
+      - name: Upload Android Artifact
         if: matrix.platform == 'android'
         uses: actions/upload-artifact@v4
         with:
           name: Android-Release-APK
           path: ${{ matrix.output_path }}
 
-      # 10. 产物收集 - Windows (自动压缩 Release 文件夹)
-      - name: Upload Windows EXE
+      # 10. 产物收集 - Windows (包含 exe 和所有依赖 dll)
+      - name: Upload Windows Artifact
         if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
