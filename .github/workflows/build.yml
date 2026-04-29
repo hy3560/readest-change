@@ -3,7 +3,7 @@ name: Flutter Build Dual-Platform
 on:
   push:
     branches: [ "main", "master" ]
-  workflow_dispatch: # 允许手动点击触发构建
+  workflow_dispatch: 
 
 jobs:
   build:
@@ -11,90 +11,65 @@ jobs:
     runs-on: ${{ matrix.os }}
     
     strategy:
-      fail-fast: false # 即使一个平台失败，另一个也继续跑完
+      fail-fast: false 
       matrix:
         include:
           - os: ubuntu-latest
             platform: apk
-            output_path: build/app/outputs/flutter-apk/app-release.apk
           - os: windows-latest
             platform: windows
-            output_path: build/windows/x64/runner/Release/
 
     steps:
-      # 1. 检出代码
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. 设置 Java 环境 (针对 Android 缓存路径做了修正)
       - name: Set up Java 17
         if: matrix.platform == 'apk'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-          # 修正缓存路径，指向项目中的 android 目录
-          cache: 'gradle'
-          cache-dependency-path: 'android/*.gradle*' 
-
-      # 3. 设置 Flutter 环境并开启 SDK 缓存
+          # 暂时关闭 Gradle 缓存路径检查，避免因文件夹缺失导致的初始化失败
+          
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      # 4. 依赖缓存 (Pub Cache)
-      - name: Cache Pub dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.pub-cache
-            ${{ env.FLUTTER_HOME }}/.pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pub-
-
-      # 5. 获取依赖
       - name: Install dependencies
         run: flutter pub get
 
-      # 6. 【构建 Android APK】解决 OOM 的核心逻辑
+      # --- 核心修复步骤：如果文件夹不存在，强制创建平台环境 ---
+      - name: Auto-Repair Project Structure
+        run: |
+          flutter config --enable-windows-desktop
+          flutter create --platforms=android,windows .
+
+      # --- 构建 Android APK (解决内存溢出) ---
       - name: Build Android APK
         if: matrix.platform == 'apk'
         run: |
-          # 清理旧产物
-          flutter clean
-          # 彻底限制 Gradle：禁用并行、禁用守护进程、限制 JVM 堆内存为 3G
           flutter build apk --release \
-            --dart-define=GRADLE_OPTS="-Xmx3072m -Dorg.gradle.jvmargs=-Xmx3072m -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
+            --dart-define=GRADLE_OPTS="-Xmx2g -Dorg.gradle.jvmargs=-Xmx2g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
 
-      # 7. 【构建 Windows EXE】自动修复环境缺失问题
+      # --- 构建 Windows EXE ---
       - name: Build Windows EXE
         if: matrix.platform == 'windows'
-        shell: pwsh
         run: |
-          flutter clean
-          # 开启 Windows 支持
-          flutter config --enable-windows-desktop
-          # 关键：如果仓库里没提交 windows 目录，云端自动初始化它
-          if (!(Test-Path "windows")) {
-            flutter create --platforms=windows .
-          }
           flutter build windows --release
 
-      # 8. 上传 Android 产物
+      # --- 产物收集 ---
       - name: Upload Android Artifact
         if: matrix.platform == 'apk'
         uses: actions/upload-artifact@v4
         with:
           name: Android-Release-APK
-          path: ${{ matrix.output_path }}
+          path: build/app/outputs/flutter-apk/app-release.apk
 
-      # 9. 上传 Windows 产物 (打包整个 Release 文件夹)
       - name: Upload Windows Artifact
         if: matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: Windows-Release-EXE
-          path: ${{ matrix.output_path }}
+          path: build/windows/x64/runner/Release/
